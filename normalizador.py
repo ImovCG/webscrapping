@@ -117,6 +117,7 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
         'data_coleta': anuncio.get('data_coleta'),
         'descricao': anuncio.get('descricao_raw'),
         'fonte': anuncio.get('fonte'),
+        'fotos': json.dumps(anuncio.get('fotos') or [], ensure_ascii=False),
     }
 
 
@@ -136,7 +137,7 @@ def normalizar(arquivo_entrada: str, arquivo_saida: Optional[str] = None) -> str
     cabecalho = [
         'external_id', 'titulo', 'preco', 'tipo_anuncio', 'categoria',
         'cidade', 'bairro', 'quartos', 'banheiros', 'area_m2',
-        'condominio', 'iptu', 'vagas', 'url', 'data_coleta', 'descricao', 'fonte',
+        'condominio', 'iptu', 'vagas', 'url', 'data_coleta', 'descricao', 'fonte', 'fotos',
     ]
 
     with open(arquivo_saida, 'w', newline='', encoding='utf-8') as csv_out:

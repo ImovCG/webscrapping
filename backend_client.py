@@ -12,16 +12,10 @@ load_dotenv()
 
 def carregar_config() -> dict:
     return {
-        'url': os.getenv('BACKEND_URL', 'http://localhost:8000/api/imoveis'),
+        'url': os.getenv('BACKEND_URL', 'http://localhost:8080/api/imoveis/lote'),
         'token': os.getenv('BACKEND_TOKEN'),
         'timeout': int(os.getenv('BACKEND_TIMEOUT', '30')),
     }
-
-
-LISTING_TYPE_MAP = {
-    'aluguel': 'RENT',
-    'venda': 'SALE',
-}
 
 
 def parse_data_coleta(data_str: Optional[str]) -> Optional[str]:
@@ -29,9 +23,19 @@ def parse_data_coleta(data_str: Optional[str]) -> Optional[str]:
         return None
     try:
         dt = datetime.strptime(data_str, '%d/%m/%Y')
-        return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        return dt.strftime('%Y-%m-%d')
     except ValueError:
         return None
+
+
+def parse_fotos(fotos_str: Optional[str]) -> list[str]:
+    if not fotos_str:
+        return []
+    try:
+        fotos = json.loads(fotos_str)
+        return fotos if isinstance(fotos, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 def csv_para_payload(linha: dict) -> dict:
@@ -56,45 +60,34 @@ def csv_para_payload(linha: dict) -> dict:
     vagas = linha.get('vagas', '')
     vagas_int = int(vagas) if vagas else None
 
-    listing_type = LISTING_TYPE_MAP.get(
-        (linha.get('tipo_anuncio') or '').lower(), 'RENT'
-    )
+    bairro = linha.get('bairro') or ''
+    cidade = linha.get('cidade') or ''
+    estado = linha.get('estado', 'PB')
+    endereco_parts = [p for p in [bairro, cidade, estado] if p]
+    endereco = ', '.join(endereco_parts) if endereco_parts else None
 
-    payload = {
-        'source': linha.get('fonte', 'olx'),
+    return {
         'externalId': linha.get('external_id'),
+        'fonte': linha.get('fonte', 'olx'),
+        'titulo': linha.get('titulo'),
+        'preco': preco_float,
+        'tipoAnuncio': linha.get('tipo_anuncio'),
+        'categoria': linha.get('categoria') or None,
+        'endereco': endereco,
+        'bairro': linha.get('bairro') or None,
+        'cidade': linha.get('cidade') or None,
+        'estado': estado,
+        'quartos': quartos_int,
+        'banheiros': banheiros_int,
+        'vagas': vagas_int,
+        'areaM2': area_float,
+        'condominio': condominio_float,
+        'iptu': iptu_float,
+        'descricao': linha.get('descricao') or None,
         'url': linha.get('url'),
-        'capturedAt': parse_data_coleta(linha.get('data_coleta')),
-        'listingType': listing_type,
-        'propertyType': linha.get('categoria'),
-        'title': linha.get('titulo'),
-        'description': linha.get('descricao'),
-        'price': {
-            'amount': preco_float,
-            'currency': 'BRL',
-            'iptu': iptu_float,
-            'condoFee': condominio_float,
-        },
-        'address': {
-            'neighborhood': linha.get('bairro'),
-            'city': linha.get('cidade'),
-            'state': 'PB',
-            'country': 'BR',
-        },
-        'features': {
-            'bedrooms': quartos_int,
-            'bathrooms': banheiros_int,
-            'parkingSpots': vagas_int,
-        },
+        'dataColeta': parse_data_coleta(linha.get('data_coleta')),
+        'fotos': parse_fotos(linha.get('fotos')),
     }
-
-    if area_float is not None:
-        payload['area'] = {
-            'usable': area_float,
-            'unit': 'M2',
-        }
-
-    return payload
 
 
 def enviar_lote(caminho_csv: str) -> dict:
