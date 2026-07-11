@@ -1,0 +1,6 @@
+filtros:
+  preco_maximo: 1500
+  bairros_permitidos: []
+  categorias_permitidas: []
+  remover_sem_preco: true
+  remover_sem_bairro: false

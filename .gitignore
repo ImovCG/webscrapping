@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Artifacts (dados coletados, logs, payloads falhos)
+artifacts/
