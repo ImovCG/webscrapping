@@ -2,7 +2,6 @@ import csv
 import json
 import os
 import re
-import time
 from datetime import date
 from typing import Optional
 
@@ -10,6 +9,8 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # =============================================================================
 # CONFIGURACAO
@@ -19,6 +20,8 @@ FONTE = 'olx'
 TIPO_ANUNCIO = 'aluguel'
 MAX_PAGINAS = 10
 PAGINA_INICIAL = 1
+WAIT_TIMEOUT = 10
+MAX_TENTATIVAS = 2
 HEADER = 'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36'
 
 
@@ -35,6 +38,51 @@ def criar_driver() -> webdriver.Chrome:
 def extrair_external_id(link: str) -> Optional[str]:
     match = re.search(r'(\d{7,})$', link)
     return match.group(1) if match else None
+
+
+CATEGORIAS_CONHECIDAS = [
+    'apartamento', 'casa', 'kitnet', 'kitnete', 'studio', 'loft',
+    'sala', 'comercial', 'loja', 'galpao', 'galpão', 'deposito',
+    'terreno', 'lote', 'fazenda', 'sítio', 'sitio', 'chácara', 'chacara',
+    'predio', 'prédio', 'pousada', 'hotel',
+]
+
+
+def extrair_categoria(driver, jsonld: Optional[dict], link: str) -> Optional[str]:
+    if jsonld:
+        for chave in ('category', 'additionalType'):
+            val = jsonld.get(chave) or jsonld.get('Object', {}).get(chave)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip()
+
+    try:
+        breadcrumb = driver.find_elements(
+            By.CSS_SELECTOR,
+            'nav[aria-label*="breadcrumb" i] li, [data-testid="breadcrumb"] li, .breadcrumb li',
+        )
+        if breadcrumb and len(breadcrumb) >= 3:
+            categoria_texto = breadcrumb[-1].text.strip()
+            if categoria_texto:
+                return categoria_texto
+    except:
+        pass
+
+    slug = link.lower()
+    for cat in CATEGORIAS_CONHECIDAS:
+        if cat in slug:
+            if cat in ('kitnete',):
+                return 'kitnet'
+            if cat in ('galpão',):
+                return 'galpao'
+            if cat in ('prédio',):
+                return 'predio'
+            if cat in ('sítio',):
+                return 'sitio'
+            if cat in ('chácara',):
+                return 'chacara'
+            return cat
+
+    return None
 
 
 def coletar_links() -> list[str]:
@@ -59,10 +107,19 @@ def coletar_links() -> list[str]:
             driver.get(url=url)
         except TimeoutException:
             print(f'Timeout ao carregar pagina {pagina}. Pulando...')
-            driver.close()
+            driver.quit()
             pagina += 1
             continue
-        time.sleep(4)
+
+        try:
+            WebDriverWait(driver, WAIT_TIMEOUT).until(
+                EC.presence_of_element_located((By.TAG_NAME, 'a'))
+            )
+        except TimeoutException:
+            print(f'Pagina {pagina} nao carregou a tempo. Pulando...')
+            driver.quit()
+            pagina += 1
+            continue
 
         all_a = driver.find_elements(By.TAG_NAME, 'a')
         cards = []
@@ -85,7 +142,7 @@ def coletar_links() -> list[str]:
                 continue
 
         print(f'Encontrados {encontrados} links na pagina {pagina}.')
-        driver.close()
+        driver.quit()
 
         if encontrados == 0:
             print('Fim das paginas.')
@@ -136,14 +193,24 @@ def formatar_preco_jsonld(price_str: str) -> Optional[str]:
 
 
 def extrair_anuncio(driver: webdriver.Chrome, link: str) -> Optional[dict]:
-    time.sleep(3)
-
     external_id = extrair_external_id(link)
     if not external_id:
         print(f'Link sem external_id: {link}. Pulando...')
         return None
 
+    try:
+        WebDriverWait(driver, WAIT_TIMEOUT).until(
+            EC.presence_of_element_located((
+                By.CSS_SELECTOR,
+                'h1, [data-testid="ad-title"], .typo-title-medium',
+            ))
+        )
+    except TimeoutException:
+        print(f'Pagina do anuncio nao carregou a tempo: {link}. Pulando...')
+        return None
+
     jsonld = extrair_jsonld(driver)
+    categoria = extrair_categoria(driver, jsonld, link)
 
     preco_raw = None
     try:
@@ -230,7 +297,7 @@ def extrair_anuncio(driver: webdriver.Chrome, link: str) -> Optional[dict]:
         'titulo': titulo,
         'preco_raw': preco_raw,
         'tipo_anuncio_raw': TIPO_ANUNCIO,
-        'categoria_raw': None,
+        'categoria_raw': categoria,
         'endereco_raw': endereco_raw,
         'quartos_raw': quartos_raw,
         'banheiros_raw': banheiros_raw,
@@ -270,17 +337,30 @@ def scraper_olx() -> str:
         total = len(links)
         for i, link in enumerate(links, start=1):
             print(f'Processando {i}/{total}: {link}')
-            driver = criar_driver()
-            driver.set_page_load_timeout(30)
-            try:
-                driver.get(url=link)
-            except TimeoutException:
-                print(f'  Timeout ao carregar {link}. Pulando...')
-                driver.close()
-                continue
 
-            anuncio = extrair_anuncio(driver, link)
-            driver.close()
+            anuncio = None
+            for tentativa in range(1, MAX_TENTATIVAS + 1):
+                driver = criar_driver()
+                driver.set_page_load_timeout(30)
+                try:
+                    driver.get(url=link)
+                except TimeoutException:
+                    print(f'  Timeout ao carregar {link} (tentativa {tentativa}/{MAX_TENTATIVAS})')
+                    driver.quit()
+                    if tentativa == MAX_TENTATIVAS:
+                        print(f'  Desistindo de {link} apos {MAX_TENTATIVAS} tentativas.')
+                    continue
+
+                try:
+                    anuncio = extrair_anuncio(driver, link)
+                except Exception as e:
+                    print(f'  Erro ao extrair {link}: {e}')
+                    anuncio = None
+                finally:
+                    driver.quit()
+
+                if anuncio is not None:
+                    break
 
             if not anuncio:
                 continue
