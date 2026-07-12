@@ -1,0 +1,7 @@
+.venv/
+artifacts/
+.git/
+*.md
+.env
+.env.*
+__pycache__/
