@@ -7,6 +7,7 @@ from typing import Optional
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
@@ -32,6 +33,15 @@ def criar_driver() -> webdriver.Chrome:
     chrome_options.add_argument('--disable-blink-features=AutomationControlled')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
+
+    chrome_bin = os.getenv('CHROME_BIN')
+    if chrome_bin:
+        chrome_options.binary_location = chrome_bin
+
+    chromedriver_bin = os.getenv('CHROMEDRIVER_BIN')
+    if chromedriver_bin:
+        return webdriver.Chrome(options=chrome_options, service=Service(chromedriver_bin))
+
     return webdriver.Chrome(options=chrome_options)
 
 
