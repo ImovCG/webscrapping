@@ -18,6 +18,21 @@ def carregar_config() -> dict:
     }
 
 
+def url_individual(url_lote: str) -> str:
+    if url_lote.endswith('/lote'):
+        return url_lote[:-5]
+    return url_lote.rstrip('/')
+
+
+def salvar_falha(dados, erro: str) -> str:
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    falhou_path = f'artifacts/falhou_envio_{timestamp}.json'
+    with open(falhou_path, 'w', encoding='utf-8') as f:
+        json.dump({'payload': dados, 'erro': erro}, f, ensure_ascii=False, indent=2)
+    print(f'Payload salvo em {falhou_path} para retentativa manual.')
+    return falhou_path
+
+
 def parse_data_coleta(data_str: Optional[str]) -> Optional[str]:
     if not data_str:
         return None
@@ -90,6 +105,16 @@ def csv_para_payload(linha: dict) -> dict:
     }
 
 
+def enviar_um(imovel: dict, url: str, headers: dict, timeout: int) -> bool:
+    try:
+        resp = requests.post(url, json=imovel, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return True
+    except requests.RequestException as e:
+        print(f'  Falha registro {imovel.get("externalId")}: {e}')
+        return False
+
+
 def enviar_lote(caminho_csv: str) -> dict:
     config = carregar_config()
     url = config['url']
@@ -118,13 +143,27 @@ def enviar_lote(caminho_csv: str) -> dict:
         print(f'Enviados {len(registros)} registros para {url}')
         print(f'Resposta: {resp.status_code}')
         return {'enviados': len(registros), 'falhas': 0, 'erro': None}
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 400:
+            print('Lote rejeitado pelo backend (400 - validacao). Tentando envio individual...')
+            url_um = url_individual(url)
+            enviados = 0
+            falhas = []
+            for imovel in registros:
+                if enviar_um(imovel, url_um, headers, timeout):
+                    enviados += 1
+                else:
+                    falhas.append(imovel)
+            if falhas:
+                salvar_falha(falhas, f'validacao individual falhou para {len(falhas)} registro(s)')
+            print(f'Envio individual: {enviados} ok, {len(falhas)} falhas')
+            return {'enviados': enviados, 'falhas': len(falhas), 'erro': None if not falhas else 'validacao individual'}
+        print(f'Erro ao enviar dados: {e}')
+        salvar_falha(payload, str(e))
+        return {'enviados': 0, 'falhas': len(registros), 'erro': str(e)}
     except requests.RequestException as e:
         print(f'Erro ao enviar dados: {e}')
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        falhou_path = f'artifacts/falhou_envio_{timestamp}.json'
-        with open(falhou_path, 'w', encoding='utf-8') as f:
-            json.dump({'payload': payload, 'erro': str(e)}, f, ensure_ascii=False, indent=2)
-        print(f'Payload salvo em {falhou_path} para retentativa manual.')
+        salvar_falha(payload, str(e))
         return {'enviados': 0, 'falhas': len(registros), 'erro': str(e)}
 
 
