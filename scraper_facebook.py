@@ -253,24 +253,6 @@ def extrair_texto(article) -> Optional[str]:
     return None
 
 
-def extrair_fotos(article) -> list[str]:
-    fotos: list[str] = []
-    vistos: set[str] = set()
-    try:
-        for img in article.find_elements(By.CSS_SELECTOR, 'img[src*="scontent"]'):
-            src = img.get_attribute('src') or ''
-            # Avatares tendem a ser pequenos/quadrados; filtra por dimensao quando disponivel.
-            largura = img.get_attribute('width')
-            if largura and largura.isdigit() and int(largura) < 130:
-                continue
-            if src and src not in vistos:
-                vistos.add(src)
-                fotos.append(src)
-    except WebDriverException:
-        pass
-    return fotos
-
-
 def montar_anuncio(article) -> Optional[dict]:
     expandir_ver_mais(article)
 
@@ -303,7 +285,9 @@ def montar_anuncio(article) -> Optional[dict]:
         'vagas_raw': extrair_por_regex(texto, r'\d+\s*(?:vagas?|garagens?)'),
         'descricao_raw': texto,
         'data_coleta': date.today().strftime('%d/%m/%Y'),
-        'fotos': extrair_fotos(article),
+        # Fotos do FB nao sao coletadas: URLs do scontent sao longas (estouram a
+        # coluna do backend) e expiram. O frontend usa uma imagem ilustrativa.
+        'fotos': [],
     }
 
 
