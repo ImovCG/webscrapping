@@ -447,7 +447,7 @@ def extrair_anuncio(driver: webdriver.Chrome, link: str) -> Optional[dict]:
     }
 
 
-def scraper_olx() -> str:
+def scraper_olx(flush_callback=None, batch_size: int = 20) -> str:
     links = coletar_links()
     if not links:
         print('Nenhum link novo encontrado.')
@@ -469,6 +469,7 @@ def scraper_olx() -> str:
                     except:
                         continue
 
+    buffer: list[dict] = []
     with open(output_file, 'a', encoding='utf-8') as out:
         total = len(links)
         for i, link in enumerate(links, start=1):
@@ -506,8 +507,18 @@ def scraper_olx() -> str:
                 continue
 
             out.write(json.dumps(anuncio, ensure_ascii=False) + '\n')
+            out.flush()
             imoveis_existentes.add(anuncio['external_id'])
             print(f'  OK: {anuncio["titulo"]} - {anuncio["preco_raw"]}')
+
+            if flush_callback is not None:
+                buffer.append(anuncio)
+                if len(buffer) >= batch_size:
+                    flush_callback(buffer)
+                    buffer = []
+
+    if flush_callback is not None and buffer:
+        flush_callback(buffer)
 
     print(f'Dados exportados para {output_file}')
     return output_file

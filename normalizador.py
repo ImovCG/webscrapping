@@ -16,11 +16,25 @@ def carregar_config(caminho: str = 'config.yaml') -> dict:
 def parse_preco(valor: Optional[str]) -> Optional[float]:
     if not valor:
         return None
-    valor = valor.strip().upper()
-    if 'a combinar' in valor or 'não informado' in valor or 'nao informado' in valor or 'grátis' in valor:
+    v = valor.strip().lower()
+    if 'a combinar' in v or 'não informado' in v or 'nao informado' in v \
+            or 'grátis' in v or 'gratis' in v:
         return None
-    numeros = re.sub(r'[^\d,]', '', valor)
-    numeros = numeros.replace(',', '.')
+
+    numeros = re.sub(r'[^\d,.]', '', v)
+    if not numeros:
+        return None
+
+    # Formato pt-BR: '.' e separador de milhar e ',' e decimal (ex: 1.200,00).
+    if ',' in numeros:
+        numeros = numeros.replace('.', '').replace(',', '.')
+    else:
+        # So pontos: se todos os grupos apos o primeiro tem 3 digitos, e milhar
+        # (ex: 1.200 -> 1200, 1.200.000 -> 1200000).
+        partes = numeros.split('.')
+        if len(partes) > 1 and all(len(p) == 3 for p in partes[1:]):
+            numeros = ''.join(partes)
+
     try:
         return float(numeros)
     except ValueError:
@@ -121,6 +135,41 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
     }
 
 
+CABECALHO = [
+    'external_id', 'titulo', 'preco', 'tipo_anuncio', 'categoria',
+    'cidade', 'bairro', 'quartos', 'banheiros', 'area_m2',
+    'condominio', 'iptu', 'vagas', 'url', 'data_coleta', 'descricao', 'fonte', 'fotos',
+]
+
+
+def normalizar_lista(anuncios: list[dict], config: Optional[dict] = None) -> list[dict]:
+    """Normaliza e filtra uma lista de anuncios crus (em memoria)."""
+    if config is None:
+        config = carregar_config()
+
+    normalizados = []
+    for anuncio in anuncios:
+        normalizado = normalizar_anuncio(anuncio)
+        if not normalizado:
+            continue
+        if not aplicar_filtros(normalizado, config):
+            continue
+        normalizados.append(normalizado)
+    return normalizados
+
+
+def escrever_csv(normalizados: list[dict], arquivo_saida: str, incluir_cabecalho: bool = True) -> None:
+    """Escreve/append uma lista de registros normalizados num CSV."""
+    os.makedirs(os.path.dirname(arquivo_saida) or '.', exist_ok=True)
+    modo = 'w' if incluir_cabecalho else 'a'
+    with open(arquivo_saida, modo, newline='', encoding='utf-8') as csv_out:
+        writer = csv.DictWriter(csv_out, fieldnames=CABECALHO, extrasaction='ignore')
+        if incluir_cabecalho:
+            writer.writeheader()
+        for normalizado in normalizados:
+            writer.writerow(normalizado)
+
+
 def normalizar(arquivo_entrada: str, arquivo_saida: Optional[str] = None) -> str:
     config = carregar_config()
 
@@ -130,48 +179,25 @@ def normalizar(arquivo_entrada: str, arquivo_saida: Optional[str] = None) -> str
 
     os.makedirs('artifacts', exist_ok=True)
 
-    norm_count = 0
-    filtrado_count = 0
+    crus = []
     erro_count = 0
+    with open(arquivo_entrada, 'r', encoding='utf-8') as f:
+        for linha in f:
+            linha = linha.strip()
+            if not linha:
+                continue
+            try:
+                crus.append(json.loads(linha))
+            except json.JSONDecodeError:
+                erro_count += 1
 
-    cabecalho = [
-        'external_id', 'titulo', 'preco', 'tipo_anuncio', 'categoria',
-        'cidade', 'bairro', 'quartos', 'banheiros', 'area_m2',
-        'condominio', 'iptu', 'vagas', 'url', 'data_coleta', 'descricao', 'fonte', 'fotos',
-    ]
-
-    with open(arquivo_saida, 'w', newline='', encoding='utf-8') as csv_out:
-        writer = csv.DictWriter(csv_out, fieldnames=cabecalho, extrasaction='ignore')
-        writer.writeheader()
-
-        with open(arquivo_entrada, 'r', encoding='utf-8') as f:
-            for linha in f:
-                linha = linha.strip()
-                if not linha:
-                    continue
-
-                try:
-                    anuncio = json.loads(linha)
-                except json.JSONDecodeError:
-                    erro_count += 1
-                    continue
-
-                normalizado = normalizar_anuncio(anuncio)
-                if not normalizado:
-                    erro_count += 1
-                    continue
-
-                if not aplicar_filtros(normalizado, config):
-                    filtrado_count += 1
-                    continue
-
-                writer.writerow(normalizado)
-                norm_count += 1
+    normalizados = normalizar_lista(crus, config)
+    escrever_csv(normalizados, arquivo_saida)
 
     print(f'Normalizacao concluida:')
-    print(f'  Registros normalizados: {norm_count}')
-    print(f'  Registros filtrados:    {filtrado_count}')
-    print(f'  Erros:                  {erro_count}')
+    print(f'  Registros normalizados: {len(normalizados)}')
+    print(f'  Registros descartados:  {len(crus) - len(normalizados)}')
+    print(f'  Linhas invalidas:       {erro_count}')
     print(f'Saida: {arquivo_saida}')
 
     return arquivo_saida

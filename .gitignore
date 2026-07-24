@@ -7,3 +7,10 @@ __pycache__/
 
 # Artifacts (dados coletados, logs, payloads falhos)
 artifacts/
+
+# Cookies de sessao do Facebook (segredo - nunca commitar)
+fb_cookies.json
+secrets/
+
+.venv
+venv

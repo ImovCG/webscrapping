@@ -15,7 +15,14 @@ def carregar_config() -> dict:
         'url': os.getenv('BACKEND_URL', 'http://localhost:8080/api/imoveis/lote'),
         'token': os.getenv('BACKEND_TOKEN'),
         'timeout': int(os.getenv('BACKEND_TIMEOUT', '30')),
+        'batch_size': int(os.getenv('BACKEND_BATCH_SIZE', '20')),
     }
+
+
+def dividir_em_lotes(registros: list, tamanho: int) -> list:
+    if tamanho <= 0:
+        return [registros]
+    return [registros[i:i + tamanho] for i in range(0, len(registros), tamanho)]
 
 
 def url_individual(url_lote: str) -> str:
@@ -120,6 +127,7 @@ def enviar_lote(caminho_csv: str) -> dict:
     url = config['url']
     token = config['token']
     timeout = config['timeout']
+    batch_size = config['batch_size']
 
     headers = {'Content-Type': 'application/json'}
     if token:
@@ -135,36 +143,46 @@ def enviar_lote(caminho_csv: str) -> dict:
         print('Nenhum registro para enviar.')
         return {'enviados': 0, 'falhas': 0, 'erro': None}
 
-    payload = {'imoveis': registros}
+    url_um = url_individual(url)
+    lotes = dividir_em_lotes(registros, batch_size)
+    total = len(registros)
+    enviados = 0
+    falhas = 0
+    erro = None
 
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        print(f'Enviados {len(registros)} registros para {url}')
-        print(f'Resposta: {resp.status_code}')
-        return {'enviados': len(registros), 'falhas': 0, 'erro': None}
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code == 400:
-            print('Lote rejeitado pelo backend (400 - validacao). Tentando envio individual...')
-            url_um = url_individual(url)
-            enviados = 0
-            falhas = []
-            for imovel in registros:
-                if enviar_um(imovel, url_um, headers, timeout):
-                    enviados += 1
-                else:
-                    falhas.append(imovel)
-            if falhas:
-                salvar_falha(falhas, f'validacao individual falhou para {len(falhas)} registro(s)')
-            print(f'Envio individual: {enviados} ok, {len(falhas)} falhas')
-            return {'enviados': enviados, 'falhas': len(falhas), 'erro': None if not falhas else 'validacao individual'}
-        print(f'Erro ao enviar dados: {e}')
-        salvar_falha(payload, str(e))
-        return {'enviados': 0, 'falhas': len(registros), 'erro': str(e)}
-    except requests.RequestException as e:
-        print(f'Erro ao enviar dados: {e}')
-        salvar_falha(payload, str(e))
-        return {'enviados': 0, 'falhas': len(registros), 'erro': str(e)}
+    for idx, lote in enumerate(lotes, start=1):
+        payload = {'imoveis': lote}
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            enviados += len(lote)
+            print(f'Lote {idx}/{len(lotes)}: {len(lote)} enviados ({enviados}/{total} no total)')
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 400:
+                print(f'Lote {idx}/{len(lotes)} rejeitado (400 - validacao). Tentando individual...')
+                lote_falhas = []
+                for imovel in lote:
+                    if enviar_um(imovel, url_um, headers, timeout):
+                        enviados += 1
+                    else:
+                        lote_falhas.append(imovel)
+                if lote_falhas:
+                    salvar_falha(lote_falhas, f'validacao individual falhou para {len(lote_falhas)} registro(s)')
+                    falhas += len(lote_falhas)
+                    erro = 'validacao individual'
+            else:
+                print(f'Erro ao enviar lote {idx}/{len(lotes)}: {e}')
+                salvar_falha(payload, str(e))
+                falhas += len(lote)
+                erro = str(e)
+        except requests.RequestException as e:
+            print(f'Erro ao enviar lote {idx}/{len(lotes)}: {e}')
+            salvar_falha(payload, str(e))
+            falhas += len(lote)
+            erro = str(e)
+
+    print(f'Envio concluido: {enviados} enviados, {falhas} falhas ({len(lotes)} lotes de ate {batch_size})')
+    return {'enviados': enviados, 'falhas': falhas, 'erro': erro}
 
 
 if __name__ == '__main__':

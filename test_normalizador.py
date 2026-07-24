@@ -1,3 +1,5 @@
+import csv
+import os
 import unittest
 
 from normalizador import (
@@ -7,6 +9,9 @@ from normalizador import (
     extrair_bairro_cidade,
     aplicar_filtros,
     normalizar_anuncio,
+    normalizar_lista,
+    escrever_csv,
+    CABECALHO,
 )
 
 
@@ -52,6 +57,16 @@ class TestParsePreco(unittest.TestCase):
 
     def test_preco_zero(self):
         self.assertEqual(parse_preco('R$ 0'), 0.0)
+
+    def test_preco_milhar_com_centavos(self):
+        self.assertEqual(parse_preco('R$ 1.200,00'), 1200.0)
+
+    def test_preco_milhoes(self):
+        self.assertEqual(parse_preco('R$ 1.200.000'), 1200000.0)
+
+    def test_preco_a_combinar_com_numero(self):
+        # 'a combinar' deve filtrar mesmo com digitos por perto.
+        self.assertIsNone(parse_preco('Valor a combinar (uns 500)'))
 
 
 class TestParseInteiro(unittest.TestCase):
@@ -319,6 +334,51 @@ class TestNormalizarAnuncio(unittest.TestCase):
         import json
         resultado = normalizar_anuncio(anuncio)
         self.assertEqual(json.loads(resultado['fotos']), [])
+
+
+class TestNormalizarLista(unittest.TestCase):
+    config = {
+        'preco_maximo': 1500, 'bairros_permitidos': [], 'categorias_permitidas': [],
+        'remover_sem_preco': True, 'remover_sem_bairro': False,
+    }
+
+    def test_filtra_sem_preco_e_acima_do_max(self):
+        anuncios = [
+            {'external_id': '1', 'preco_raw': 'R$ 800', 'endereco_raw': 'Centro'},
+            {'external_id': '2', 'preco_raw': 'a combinar', 'endereco_raw': 'Centro'},
+            {'external_id': '3', 'preco_raw': 'R$ 5.000', 'endereco_raw': 'Centro'},
+        ]
+        resultado = normalizar_lista(anuncios, self.config)
+        ids = [r['external_id'] for r in resultado]
+        self.assertEqual(ids, ['1'])
+
+    def test_lista_vazia(self):
+        self.assertEqual(normalizar_lista([], self.config), [])
+
+
+class TestEscreverCsv(unittest.TestCase):
+    path = 'artifacts/_test_escrever.csv'
+
+    def tearDown(self):
+        if os.path.exists(self.path):
+            os.remove(self.path)
+
+    def _linhas(self):
+        with open(self.path, newline='', encoding='utf-8') as f:
+            return list(csv.DictReader(f))
+
+    def test_escreve_com_cabecalho(self):
+        escrever_csv([{'external_id': '1', 'preco': 800.0}], self.path, incluir_cabecalho=True)
+        linhas = self._linhas()
+        self.assertEqual(len(linhas), 1)
+        self.assertEqual(linhas[0]['external_id'], '1')
+        self.assertEqual(set(linhas[0].keys()), set(CABECALHO))
+
+    def test_append_sem_cabecalho(self):
+        escrever_csv([{'external_id': '1'}], self.path, incluir_cabecalho=True)
+        escrever_csv([{'external_id': '2'}], self.path, incluir_cabecalho=False)
+        linhas = self._linhas()
+        self.assertEqual([l['external_id'] for l in linhas], ['1', '2'])
 
 
 if __name__ == '__main__':
