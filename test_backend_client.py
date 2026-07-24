@@ -30,6 +30,41 @@ class TestUrlIndividual(unittest.TestCase):
         )
 
 
+class TestParseFotos(unittest.TestCase):
+    def test_none(self):
+        self.assertEqual(bc.parse_fotos(None), [])
+
+    def test_vazio(self):
+        self.assertEqual(bc.parse_fotos(''), [])
+
+    def test_json_valido(self):
+        self.assertEqual(
+            bc.parse_fotos('["https://a.jpg", "https://b.jpg"]'),
+            ['https://a.jpg', 'https://b.jpg'],
+        )
+
+    def test_json_invalido(self):
+        self.assertEqual(bc.parse_fotos('nao eh json'), [])
+
+    def test_nao_lista(self):
+        self.assertEqual(bc.parse_fotos('{"k": "v"}'), [])
+
+
+class TestCsvParaPayloadFotos(unittest.TestCase):
+    def test_fotos_serializadas(self):
+        linha = {'fotos': '["https://a.jpg", "https://b.jpg"]'}
+        payload = bc.csv_para_payload(linha)
+        self.assertEqual(payload['fotos'], ['https://a.jpg', 'https://b.jpg'])
+
+    def test_fotos_vazias(self):
+        payload = bc.csv_para_payload({'fotos': '[]'})
+        self.assertEqual(payload['fotos'], [])
+
+    def test_fotos_ausentes(self):
+        payload = bc.csv_para_payload({})
+        self.assertEqual(payload['fotos'], [])
+
+
 class TestEnviarUm(unittest.TestCase):
     @patch('backend_client.requests.post')
     def test_ok(self, mock_post):

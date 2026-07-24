@@ -23,6 +23,7 @@ MAX_PAGINAS = 10
 PAGINA_INICIAL = 1
 WAIT_TIMEOUT = 10
 MAX_TENTATIVAS = 2
+MAX_FOTOS = 12
 HEADER = 'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36'
 
 
@@ -202,6 +203,140 @@ def formatar_preco_jsonld(price_str: str) -> Optional[str]:
         return None
 
 
+_BLACKLIST_URL = ('logo', 'icon', 'sprite', 'avatar', 'user-profile', 'profile', 'placeholder')
+_BLACKLIST_CONTAINER = ('user-profile', 'avatar', 'profile', 'seller', 'anunciante')
+
+
+def _url_valida(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    if url.startswith('data:'):
+        return False
+    if not url.startswith(('http://', 'https://')):
+        return False
+    low = url.lower()
+    if any(b in low for b in _BLACKLIST_URL):
+        return False
+    return True
+
+
+def _container_blacklist(cont) -> bool:
+    for attr in ('data-testid', 'class', 'id', 'aria-label'):
+        try:
+            val = (cont.get_attribute(attr) or '').lower()
+        except:
+            continue
+        if any(b in val for b in _BLACKLIST_CONTAINER):
+            return True
+    return False
+
+
+def _primeiro_url_srcset(attr: Optional[str]) -> Optional[str]:
+    if not attr:
+        return None
+    for candidato in attr.split(','):
+        candidato = candidato.strip().split(' ')[0].strip()
+        if _url_valida(candidato):
+            return candidato
+    return None
+
+
+def coletar_fotos(driver) -> list[str]:
+    fotos: list[str] = []
+    vistos: set[str] = set()
+
+    seletores_container = [
+        '[data-testid="ad-media-gallery"]',
+        '[data-testid="gallery"]',
+        'div[data-section="gallery" i]',
+        'div[class*="gallery" i]',
+        'div[class*="carousel" i]',
+        'section[class*="gallery" i]',
+        'figure',
+    ]
+
+    containers = []
+    for sel in seletores_container:
+        try:
+            containers.extend(driver.find_elements(By.CSS_SELECTOR, sel))
+        except:
+            continue
+
+    if not containers:
+        try:
+            containers = driver.find_elements(By.TAG_NAME, 'body')
+        except:
+            return fotos
+
+    def _considerar(url: Optional[str]) -> None:
+        if len(fotos) >= MAX_FOTOS:
+            return
+        if not _url_valida(url):
+            return
+        if url in vistos:
+            return
+        vistos.add(url)
+        fotos.append(url)
+
+    def _processar_img(img) -> None:
+        if len(fotos) >= MAX_FOTOS:
+            return
+
+        try:
+            srcset = img.get_attribute('srcset') or img.get_attribute('data-srcset')
+            if srcset and not srcset.startswith('data:'):
+                _considerar(_primeiro_url_srcset(srcset))
+                if len(fotos) >= MAX_FOTOS:
+                    return
+        except:
+            pass
+
+        for attr in ('src', 'data-src', 'data-lazy-src', 'data-original'):
+            try:
+                val = img.get_attribute(attr)
+            except:
+                continue
+            _considerar(val)
+            if len(fotos) >= MAX_FOTOS:
+                return
+
+    def _coletar_do_container(cont) -> None:
+        try:
+            imgs = cont.find_elements(By.CSS_SELECTOR, 'img, picture > source')
+        except:
+            return
+        for el in imgs:
+            if len(fotos) >= MAX_FOTOS:
+                return
+            tag = (el.tag_name or '').lower()
+            if tag == 'source':
+                try:
+                    srcset = el.get_attribute('srcset') or el.get_attribute('data-srcset')
+                except:
+                    srcset = None
+                _considerar(_primeiro_url_srcset(srcset))
+                continue
+            _processar_img(el)
+
+    for cont in containers:
+        if len(fotos) >= MAX_FOTOS:
+            break
+        if _container_blacklist(cont):
+            continue
+        _coletar_do_container(cont)
+
+    if len(fotos) < MAX_FOTOS:
+        try:
+            for img in driver.find_elements(By.CSS_SELECTOR, 'img[src*="olx"], img[srcset], img[data-src], img[data-lazy-src]'):
+                _processar_img(img)
+                if len(fotos) >= MAX_FOTOS:
+                    break
+        except:
+            pass
+
+    return fotos
+
+
 def extrair_anuncio(driver: webdriver.Chrome, link: str) -> Optional[dict]:
     external_id = extrair_external_id(link)
     if not external_id:
@@ -287,16 +422,7 @@ def extrair_anuncio(driver: webdriver.Chrome, link: str) -> Optional[dict]:
 
     fotos = []
     try:
-        fotos_elem = driver.find_elements(
-            By.CSS_SELECTOR,
-            'img[src*="olx"]'
-        )
-        vistos = set()
-        for f in fotos_elem:
-            src = f.get_attribute('src')
-            if src and src not in vistos and 'olx' in src:
-                vistos.add(src)
-                fotos.append(src)
+        fotos = coletar_fotos(driver)
     except:
         pass
 
