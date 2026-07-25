@@ -6,6 +6,7 @@ from normalizador import (
     parse_preco,
     parse_inteiro,
     parse_area,
+    extrair_endereco,
     extrair_bairro_cidade,
     aplicar_filtros,
     normalizar_anuncio,
@@ -138,7 +139,7 @@ class TestExtrairBairroCidade(unittest.TestCase):
     def test_endereco_so_bairro(self):
         bairro, cidade = extrair_bairro_cidade('Centro')
         self.assertEqual(bairro, 'Centro')
-        self.assertIsNone(cidade)
+        self.assertEqual(cidade, 'Campina Grande')
 
     def test_endereco_com_traco(self):
         bairro, cidade = extrair_bairro_cidade('Centro - Campina Grande')
@@ -157,13 +158,66 @@ class TestExtrairBairroCidade(unittest.TestCase):
 
     def test_endereco_cidade_estado_sem_bairro(self):
         bairro, cidade = extrair_bairro_cidade('Campina Grande, PB')
-        self.assertEqual(bairro, 'Campina Grande')
-        self.assertIsNone(cidade)
+        self.assertIsNone(bairro)
+        self.assertEqual(cidade, 'Campina Grande')
 
     def test_endereco_none(self):
         bairro, cidade = extrair_bairro_cidade(None)
         self.assertIsNone(bairro)
         self.assertIsNone(cidade)
+
+
+class TestExtrairEndereco(unittest.TestCase):
+    def test_endereco_real_bairro_cidade_estado_cep(self):
+        resultado = extrair_endereco('Catolé, Campina Grande, PB, 58410900')
+        self.assertEqual(resultado['bairro'], 'Catolé')
+        self.assertEqual(resultado['cidade'], 'Campina Grande')
+        self.assertEqual(resultado['estado'], 'PB')
+        self.assertEqual(resultado['cep'], '58410900')
+        self.assertEqual(resultado['endereco'], 'Catolé, Campina Grande, PB')
+
+    def test_endereco_real_cidade_estado_cep_sem_bairro(self):
+        resultado = extrair_endereco('Campina Grande, PB, 58406450')
+        self.assertIsNone(resultado['bairro'])
+        self.assertEqual(resultado['cidade'], 'Campina Grande')
+        self.assertEqual(resultado['estado'], 'PB')
+        self.assertEqual(resultado['cep'], '58406450')
+        self.assertEqual(resultado['endereco'], 'Campina Grande, PB')
+
+    def test_endereco_real_estado_cep_sem_bairro(self):
+        resultado = extrair_endereco('PB, 58220000')
+        self.assertIsNone(resultado['bairro'])
+        self.assertIsNone(resultado['cidade'])
+        self.assertEqual(resultado['estado'], 'PB')
+        self.assertEqual(resultado['cep'], '58220000')
+        self.assertEqual(resultado['endereco'], 'PB')
+
+    def test_endereco_com_cep_formatado(self):
+        resultado = extrair_endereco('Centro, Campina Grande, PB, 58400-058')
+        self.assertEqual(resultado['bairro'], 'Centro')
+        self.assertEqual(resultado['cep'], '58400058')
+
+    def test_bairro_fallback_no_titulo(self):
+        resultado = extrair_endereco(
+            'Campina Grande, PB, 58410900',
+            titulo='Apartamento mobiliado no Catolé',
+        )
+        self.assertEqual(resultado['bairro'], 'Catolé')
+        self.assertEqual(resultado['cidade'], 'Campina Grande')
+        self.assertEqual(resultado['endereco'], 'Catolé, Campina Grande, PB')
+
+    def test_bairro_fallback_na_descricao(self):
+        resultado = extrair_endereco(
+            'Campina Grande, PB, 58411000',
+            descricao='Excelente apartamento no bairro Itararé, próximo à Unifacisa.',
+        )
+        self.assertEqual(resultado['bairro'], 'Itararé')
+        self.assertEqual(resultado['cidade'], 'Campina Grande')
+
+    def test_bairro_com_alias_sem_acento(self):
+        resultado = extrair_endereco('Tres Irmas, Campina Grande, PB, 58424250')
+        self.assertEqual(resultado['bairro'], 'Três Irmãs')
+        self.assertEqual(resultado['cidade'], 'Campina Grande')
 
     def test_endereco_vazio(self):
         bairro, cidade = extrair_bairro_cidade('')
@@ -266,8 +320,11 @@ class TestNormalizarAnuncio(unittest.TestCase):
         self.assertEqual(resultado['preco'], 1370.0)
         self.assertEqual(resultado['tipo_anuncio'], 'aluguel')
         self.assertIsNone(resultado['categoria'])
+        self.assertEqual(resultado['endereco'], 'Centro, Campina Grande, PB')
         self.assertEqual(resultado['cidade'], 'Campina Grande')
         self.assertEqual(resultado['bairro'], 'Centro')
+        self.assertEqual(resultado['estado'], 'PB')
+        self.assertIsNone(resultado['cep'])
         self.assertEqual(resultado['quartos'], 2)
         self.assertEqual(resultado['banheiros'], 1)
         self.assertEqual(resultado['area_m2'], 50.0)
@@ -292,7 +349,7 @@ class TestNormalizarAnuncio(unittest.TestCase):
             'external_id': '123',
             'titulo': 'Teste',
             'preco_raw': 'a combinar',
-            'endereco_raw': 'Bairro, Cidade, PB',
+            'endereco_raw': 'Campina Grande, PB, 58406450',
             'quartos_raw': 'sem info',
             'banheiros_raw': None,
             'area_raw': '',
@@ -311,6 +368,9 @@ class TestNormalizarAnuncio(unittest.TestCase):
         self.assertIsNone(resultado['condominio'])
         self.assertIsNone(resultado['iptu'])
         self.assertIsNone(resultado['vagas'])
+        self.assertIsNone(resultado['bairro'])
+        self.assertEqual(resultado['cidade'], 'Campina Grande')
+        self.assertEqual(resultado['cep'], '58406450')
 
     def test_normalizacao_fotos_serializadas_como_json(self):
         anuncio = {
