@@ -86,7 +86,7 @@ def csv_para_payload(linha: dict) -> dict:
     cidade = linha.get('cidade') or ''
     estado = linha.get('estado', 'PB')
     endereco_parts = [p for p in [bairro, cidade, estado] if p]
-    endereco = ', '.join(endereco_parts) if endereco_parts else None
+    endereco = linha.get('endereco') or (', '.join(endereco_parts) if endereco_parts else None)
 
     return {
         'externalId': linha.get('external_id'),

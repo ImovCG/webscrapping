@@ -7,6 +7,8 @@ from typing import Optional
 
 import yaml
 
+from bairros_campina_grande import bairro_por_token, encontrar_bairro_no_texto
+
 
 def carregar_config(caminho: str = 'config.yaml') -> dict:
     with open(caminho, 'r', encoding='utf-8') as f:
@@ -61,27 +63,90 @@ def parse_area(valor: Optional[str]) -> Optional[float]:
         return None
 
 
-def extrair_bairro_cidade(endereco_raw: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def extrair_cep(texto: Optional[str]) -> Optional[str]:
+    if not texto:
+        return None
+    match = re.search(r'\b(\d{5})-?(\d{3})\b', texto)
+    return ''.join(match.groups()) if match else None
+
+
+def extrair_endereco(
+    endereco_raw: Optional[str],
+    titulo: Optional[str] = None,
+    descricao: Optional[str] = None,
+) -> dict:
+    cep = extrair_cep(endereco_raw)
+    estado = 'PB' if endereco_raw and re.search(r'\bPB\b|para[ií]ba', endereco_raw, re.I) else 'PB'
+
     if not endereco_raw:
-        return None, None
+        bairro = encontrar_bairro_no_texto(f'{titulo or ""} {descricao or ""}')
+        cidade = 'Campina Grande' if bairro else None
+        endereco = ', '.join(p for p in [bairro, cidade, estado] if p) if bairro else None
+        return {
+            'endereco': endereco,
+            'bairro': bairro,
+            'cidade': cidade,
+            'estado': estado,
+            'cep': cep,
+        }
 
     partes = re.split(r'[–\-—,|]', endereco_raw)
-    partes = [p.strip() for p in partes if p.strip() and p.strip() not in ('PB',)]
+    partes = [p.strip() for p in partes if p.strip()]
 
-    if len(partes) >= 3:
-        bairro = partes[0]
-        cidade = partes[1]
-    elif len(partes) == 2:
-        bairro = partes[0]
-        cidade = partes[1]
-    elif len(partes) == 1:
-        bairro = partes[0]
-        cidade = None
-    else:
-        bairro = None
-        cidade = None
+    bairro = None
+    cidade = None
+    tokens_endereco = []
 
-    return bairro, cidade
+    for parte in partes:
+        if re.fullmatch(r'\d{5}-?\d{3}', parte):
+            continue
+        if re.fullmatch(r'PB', parte, re.I) or re.fullmatch(r'para[ií]ba', parte, re.I):
+            continue
+        if re.fullmatch(r'campina grande', parte, re.I):
+            cidade = 'Campina Grande'
+            continue
+
+        bairro_detectado = bairro_por_token(parte)
+        if bairro_detectado:
+            bairro = bairro or bairro_detectado
+            tokens_endereco.append(bairro_detectado)
+            continue
+
+        tokens_endereco.append(parte)
+
+    if not bairro:
+        bairro = encontrar_bairro_no_texto(f'{endereco_raw} {titulo or ""} {descricao or ""}')
+
+    if not cidade and (bairro or re.search(r'campina grande', endereco_raw, re.I)):
+        cidade = 'Campina Grande'
+
+    endereco_partes = []
+    if bairro:
+        endereco_partes.append(bairro)
+    elif tokens_endereco:
+        candidato = tokens_endereco[0]
+        if not re.fullmatch(r'campina grande', candidato, re.I):
+            endereco_partes.append(candidato)
+
+    if cidade:
+        endereco_partes.append(cidade)
+    if estado:
+        endereco_partes.append(estado)
+
+    endereco = ', '.join(dict.fromkeys(endereco_partes)) if endereco_partes else None
+
+    return {
+        'endereco': endereco,
+        'bairro': bairro,
+        'cidade': cidade,
+        'estado': estado,
+        'cep': cep,
+    }
+
+
+def extrair_bairro_cidade(endereco_raw: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    endereco = extrair_endereco(endereco_raw)
+    return endereco['bairro'], endereco['cidade']
 
 
 def aplicar_filtros(dados: dict, config: dict) -> bool:
@@ -111,7 +176,11 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
     if not external_id:
         return None
 
-    bairro, cidade = extrair_bairro_cidade(anuncio.get('endereco_raw'))
+    endereco = extrair_endereco(
+        anuncio.get('endereco_raw'),
+        titulo=anuncio.get('titulo'),
+        descricao=anuncio.get('descricao_raw'),
+    )
 
     return {
         'external_id': external_id,
@@ -119,8 +188,11 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
         'preco': parse_preco(anuncio.get('preco_raw')),
         'tipo_anuncio': anuncio.get('tipo_anuncio_raw'),
         'categoria': anuncio.get('categoria_raw'),
-        'cidade': cidade,
-        'bairro': bairro,
+        'endereco': endereco['endereco'],
+        'cidade': endereco['cidade'],
+        'bairro': endereco['bairro'],
+        'estado': endereco['estado'],
+        'cep': endereco['cep'],
         'quartos': parse_inteiro(anuncio.get('quartos_raw')),
         'banheiros': parse_inteiro(anuncio.get('banheiros_raw')),
         'area_m2': parse_area(anuncio.get('area_raw')),
@@ -137,7 +209,8 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
 
 CABECALHO = [
     'external_id', 'titulo', 'preco', 'tipo_anuncio', 'categoria',
-    'cidade', 'bairro', 'quartos', 'banheiros', 'area_m2',
+    'endereco', 'cidade', 'bairro', 'estado', 'cep',
+    'quartos', 'banheiros', 'area_m2',
     'condominio', 'iptu', 'vagas', 'url', 'data_coleta', 'descricao', 'fonte', 'fotos',
 ]
 
