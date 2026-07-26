@@ -334,6 +334,8 @@ def montar_anuncio(article) -> Optional[dict]:
         'vagas_raw': extrair_por_regex(texto, r'\d+\s*(?:vagas?|garagens?)'),
         'descricao_raw': texto,
         'data_coleta': date.today().strftime('%d/%m/%Y'),
+        'cidade': 'Campina Grande',
+        'estado': 'PB',
         # Fotos do FB nao sao coletadas: URLs do scontent sao longas (estouram a
         # coluna do backend) e expiram. O frontend usa uma imagem ilustrativa.
         'fotos': [],
