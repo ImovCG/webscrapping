@@ -55,7 +55,7 @@ def pipeline():
                     resultado['enviados'], resultado['falhas'], estado['enviados'])
 
     logger.info('Etapa 1/2: Scraper OLX (coleta + envio em lotes)')
-    scraper_olx(flush_callback=flush, batch_size=BATCH_SIZE)
+    # scraper_olx(flush_callback=flush, batch_size=BATCH_SIZE)
 
     logger.info('Etapa 2/2: Scraper Facebook (coleta + envio em lotes)')
     scraper_facebook(flush_callback=flush, batch_size=BATCH_SIZE)
