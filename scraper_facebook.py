@@ -8,6 +8,7 @@ from typing import Optional
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -22,9 +23,9 @@ BASE_URL = f'https://www.facebook.com/groups/{GROUP_ID}?locale=pt_BR'
 FONTE = 'facebook'
 TIPO_ANUNCIO = 'aluguel'
 COOKIES_PATH = os.getenv('FB_COOKIES_PATH', 'artifacts/fb_cookies.json')
-MAX_SCROLLS = int(os.getenv('FB_MAX_SCROLLS', '15'))
-SCROLL_PAUSA = float(os.getenv('FB_SCROLL_PAUSA', '3'))
-SCROLLS_SEM_NOVO_MAX = 3
+MAX_SCROLLS = int(os.getenv('FB_MAX_SCROLLS', '40'))
+SCROLL_PAUSA = float(os.getenv('FB_SCROLL_PAUSA', '1.5'))
+SCROLLS_SEM_NOVO_MAX = 6
 WAIT_TIMEOUT = 15
 
 # Termos que caracterizam um imovel (requisito duro para ser anuncio).
@@ -36,10 +37,24 @@ TIPOS_IMOVEL = set(CATEGORIAS_CONHECIDAS) | {
 # Sinais de que o post e uma BUSCA (procura), nao um anuncio.
 PADROES_PROCURO = [
     'procuro', 'procura-se', 'estou procurando', 'to procurando', 'tô procurando',
+    'estou a procura', 'estou procur', 'to procur', 'tô procur',
     'preciso de', 'preciso alugar', 'alguem tem', 'alguém tem', 'quem tem',
     'quem tiver', 'alguma casa para alugar', 'alguma casa pra alugar',
     'algum apartamento para alugar', 'algum apartamento pra alugar',
+    'alguma casa ou', 'algum apartamento ou',
     'alguem sabe', 'alguém sabe', 'ando procurando',
+    'procurar para alugar', 'procurar pra alugar', 'difículdade em procurar',
+    'dificuldade em procurar', 'procurando alugar', 'busco alugar',
+    'proximo pRA alugar', 'próximo pra alugar', 'pra alugar???',
+    'pRA alugar???',
+]
+
+# Termos que indicam que NAO e anuncio de imovel (moveis, vendas, etc).
+TERMS_NAO_IMOVEL = [
+    'sofá retrátil', 'sofa retratil', 'sofás retrátil', 'sofas retratil',
+    'sofá de luxo', 'sofa de luxo', 'sofás de luxo', 'sofas de luxo',
+    'direto de fábrica', 'direto de fabrica', 'a pronta entrega',
+    'primeiro andar', 'repasse ou alugo',
 ]
 
 # Sinais de oferta (aumentam a confianca, nao obrigatorios).
@@ -69,6 +84,7 @@ def carregar_cookies(driver: webdriver.Chrome) -> None:
         cookies = json.load(f)
 
     driver.get('https://www.facebook.com/')
+    time.sleep(2)
     for cookie in cookies:
         # add_cookie nao aceita alguns campos que o get_cookies retorna.
         cookie.pop('sameSite', None)
@@ -97,6 +113,7 @@ def criar_driver_autenticado() -> Optional[webdriver.Chrome]:
         return None
 
     driver = criar_driver()
+    driver.set_window_size(1920, 1080)
     carregar_cookies(driver)
 
     driver.set_page_load_timeout(60)
@@ -106,6 +123,10 @@ def criar_driver_autenticado() -> Optional[webdriver.Chrome]:
         print('Timeout ao carregar o grupo. Pulando Facebook.')
         driver.quit()
         return None
+
+    time.sleep(3)
+    print(f'Facebook: URL={driver.current_url}')
+    print(f'Facebook: Titulo={driver.title}')
 
     if not esta_logado(driver):
         print('Sessao do Facebook invalida/expirada (caiu na tela de login). '
@@ -128,11 +149,18 @@ def eh_anuncio(texto: Optional[str]) -> bool:
         return False
     t = texto.lower()
 
+    # Posts muito curtos provavelmente sao comentarios/reactions, nao anuncios.
+    if len(t.strip()) < 30:
+        return False
+
     tem_imovel = any(re.search(rf'\b{re.escape(tipo)}\b', t) for tipo in TIPOS_IMOVEL)
     if not tem_imovel:
         return False
 
     if any(padrao in t for padrao in PADROES_PROCURO):
+        return False
+
+    if any(termo in t for termo in TERMS_NAO_IMOVEL):
         return False
 
     return True
@@ -166,6 +194,27 @@ def extrair_endereco(texto: Optional[str]) -> Optional[str]:
     for bairro in BAIRROS_CG:
         if re.search(rf'\b{re.escape(bairro)}\b', texto, re.IGNORECASE):
             return bairro
+    return None
+
+
+def extrair_preco_facebook(texto: Optional[str]) -> Optional[str]:
+    """Extrai preco de posts do Facebook, que frequentemente nao usam R$."""
+    if not texto:
+        return None
+    # Tenta R$ primeiro (padrao classico)
+    match_r = re.search(r'R\$\s?[\d.,]+', texto, re.IGNORECASE)
+    if match_r:
+        return match_r.group(0).strip()
+    # Padrões comuns em posts: "valor 800", "aluguel 800", "800 reais", "800,00"
+    for padrao in (
+        r'(?:valor|aluguel|preco|preça|price)[:\s]*R?\$?\s*(\d[\d.,]*)',
+        r'(\d[\d.,]*)\s*(?:reais|por\s*mes|\/m[eê]s|p/\s*mes)',
+        r'(?:alug[ue]|aluga[- ]se|dispon[ií]vel)[:\s]*(?:por\s*)?R?\$?\s*(\d[\d.,]*)',
+    ):
+        match = re.search(padrao, texto, re.IGNORECASE)
+        if match:
+            valor = match.group(1) if match.lastindex else match.group(0)
+            return f'R$ {valor.strip()}'
     return None
 
 
@@ -294,34 +343,150 @@ def montar_anuncio(article) -> Optional[dict]:
 # =============================================================================
 # COLETA
 # =============================================================================
+JS_EXPAND_VER_MAIUS = '''
+// Click all "Ver mais" / "See more" buttons to expand truncated posts
+const feed = document.querySelector('div[role="feed"]');
+if (!feed) return 0;
+const botoes = feed.querySelectorAll('div[role="button"]');
+let clicked = 0;
+for (const b of botoes) {
+    const txt = (b.innerText || '').trim();
+    if (txt === 'Ver mais' || txt === 'See more') {
+        b.click();
+        clicked++;
+    }
+}
+return clicked;
+'''
+
+JS_EXTRACT_POSTS = '''
+const feed = document.querySelector('div[role="feed"]');
+if (!feed) return [];
+
+const posts = [];
+const seen = new Set();
+
+const posinset = feed.querySelectorAll('div[aria-posinset]');
+for (const el of posinset) {
+    if (el.querySelector('[data-visualcompletion="loading-state"]')) continue;
+
+    // Get all text from the post, filtering out noise
+    const autoBlocks = el.querySelectorAll('div[dir="auto"]');
+    const texts = [];
+    for (const block of autoBlocks) {
+        const t = (block.innerText || '').trim();
+        if (t.length > 3 && t !== 'Facebook' && !t.startsWith('Ver ')) texts.push(t);
+    }
+    const fullText = texts.join('\\n');
+
+    // Find post link
+    let postUrl = null;
+    let postId = null;
+    const links = el.querySelectorAll('a[href]');
+    for (const a of links) {
+        const href = a.href || '';
+        const m = href.match(/\\/posts\\/(\\d+)/)
+            || href.match(/\\/permalink\\/(\\d+)/)
+            || href.match(/multi_permalinks=(\\d+)/)
+            || href.match(/story_fbid=(\\d+)/);
+        if (m) {
+            postId = m[1];
+            postUrl = href.split('?')[0];
+            break;
+        }
+    }
+
+    // Find author — first h2/h3 link that isn't "Facebook"
+    let author = null;
+    for (const tag of ['h2', 'h3']) {
+        const headings = el.querySelectorAll(tag);
+        for (const h of headings) {
+            const links = h.querySelectorAll('a');
+            for (const a of links) {
+                const name = (a.innerText || '').trim().split('\\n')[0].trim();
+                if (name && name.length > 1 && name.length < 80 && name !== 'Facebook') {
+                    author = name;
+                    break;
+                }
+            }
+            if (author) break;
+        }
+        if (author) break;
+    }
+
+    if (!postId || seen.has(postId)) continue;
+    seen.add(postId);
+
+    posts.push({
+        id: postId,
+        url: postUrl,
+        author: author,
+        text: fullText.substring(0, 3000),
+    });
+}
+
+return posts;
+'''
+
+
 def coletar_posts(driver: webdriver.Chrome, ja_coletados: set[str]) -> list[dict]:
     try:
         WebDriverWait(driver, WAIT_TIMEOUT).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="article"]'))
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="feed"]'))
         )
     except TimeoutException:
-        print('Nenhum post carregou no feed do grupo.')
+        print('Nenhum feed carregou no grupo.')
         return []
+
+    print('[Facebook] Feed encontrado, aguardando posts carregarem...')
+    time.sleep(3)
 
     anuncios: list[dict] = []
     vistos_execucao: set[str] = set()
     scrolls_sem_novo = 0
 
     for scroll in range(1, MAX_SCROLLS + 1):
-        articles = driver.find_elements(By.CSS_SELECTOR, 'div[role="article"]')
+        # Expand "Ver mais" buttons before extracting
+        driver.execute_script(JS_EXPAND_VER_MAIUS)
+        time.sleep(1)
+
+        posts_data = driver.execute_script(JS_EXTRACT_POSTS)
+        print(f'  Scroll {scroll}: {len(posts_data)} posts extraidos.')
         novos_neste_scroll = 0
 
-        for article in articles:
-            try:
-                anuncio = montar_anuncio(article)
-            except WebDriverException:
-                continue
-            if not anuncio:
+        for idx, post_data in enumerate(posts_data, start=1):
+            ext_id = post_data['id']
+            texto = post_data['text']
+            url = post_data['url']
+            author = post_data.get('author')
+
+            if not eh_anuncio(texto):
                 continue
 
-            ext_id = anuncio['external_id']
             if ext_id in vistos_execucao or ext_id in ja_coletados:
                 continue
+
+            titulo = texto.split('\n', 1)[0][:120]
+            anuncio = {
+                'fonte': FONTE,
+                'external_id': ext_id,
+                'url': url,
+                'autor': author,
+                'titulo': titulo,
+                'preco_raw': extrair_preco_facebook(texto),
+                'tipo_anuncio_raw': TIPO_ANUNCIO,
+                'categoria_raw': inferir_categoria(texto),
+                'endereco_raw': extrair_endereco(texto),
+                'quartos_raw': extrair_por_regex(texto, r'\d+\s*(?:quartos?|qto?s?|dormit\w*)'),
+                'banheiros_raw': extrair_por_regex(texto, r'\d+\s*(?:banheiros?|wc|su[ií]tes?)'),
+                'area_raw': extrair_por_regex(texto, r'\d+[.,]?\d*\s*m[²2]'),
+                'condominio_raw': extrair_por_regex(texto, r'condom[ií]nio[:\s]*R?\$?\s?[\d.,]+'),
+                'iptu_raw': extrair_por_regex(texto, r'iptu[:\s]*R?\$?\s?[\d.,]+'),
+                'vagas_raw': extrair_por_regex(texto, r'\d+\s*(?:vagas?|garagens?)'),
+                'descricao_raw': texto,
+                'data_coleta': date.today().strftime('%d/%m/%Y'),
+                'fotos': [],
+            }
 
             vistos_execucao.add(ext_id)
             anuncios.append(anuncio)
@@ -339,7 +504,10 @@ def coletar_posts(driver: webdriver.Chrome, ja_coletados: set[str]) -> list[dict
         else:
             scrolls_sem_novo = 0
 
-        driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
+        body = driver.find_element(By.TAG_NAME, 'body')
+        for _ in range(10):
+            body.send_keys(Keys.PAGE_DOWN)
+            time.sleep(0.3)
         time.sleep(SCROLL_PAUSA)
 
     return anuncios

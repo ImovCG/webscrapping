@@ -6,6 +6,7 @@ from scraper_facebook import (
     inferir_categoria,
     extrair_por_regex,
     extrair_endereco,
+    extrair_preco_facebook,
 )
 
 
@@ -27,6 +28,12 @@ class TestEhAnuncio(unittest.TestCase):
 
     def test_preciso_descartado(self):
         self.assertFalse(eh_anuncio('Preciso de um apartamento com 1 quarto urgente'))
+
+    def test_procurar_para_alugar_descartado(self):
+        self.assertFalse(eh_anuncio(
+            'DIFICULDADE EM PROCURAR PARA ALUGAR CASAS EM CAMPINA GRANDE. '
+            'PRINCIPALMENTE COM QUINTAL, JARDIM, DOIS QUARTOS'
+        ))
 
     def test_sem_tipo_imovel_descartado(self):
         # Menciona aluguel/valor mas nenhum tipo de imovel -> nao e anuncio.
@@ -112,6 +119,26 @@ class TestExtrairEndereco(unittest.TestCase):
 
     def test_none(self):
         self.assertIsNone(extrair_endereco(None))
+
+
+class TestExtrairPrecoFacebook(unittest.TestCase):
+    def test_com_r(self):
+        self.assertEqual(extrair_preco_facebook('Aluguel R$ 800 por mes'), 'R$ 800')
+
+    def test_sem_r_valor(self):
+        self.assertEqual(extrair_preco_facebook('Valor: 850,00 por mes'), 'R$ 850,00')
+
+    def test_reais(self):
+        self.assertEqual(extrair_preco_facebook('Aluguel 1200 reais por mes'), 'R$ 1200')
+
+    def test_por_mes(self):
+        self.assertEqual(extrair_preco_facebook('Aluguel 900/mes'), 'R$ 900')
+
+    def test_none(self):
+        self.assertIsNone(extrair_preco_facebook(None))
+
+    def test_vazio(self):
+        self.assertIsNone(extrair_preco_facebook(''))
 
 
 if __name__ == '__main__':
