@@ -6,6 +6,7 @@ from normalizador import (
     parse_preco,
     parse_inteiro,
     parse_area,
+    limpar_descricao,
     extrair_endereco,
     extrair_bairro_cidade,
     aplicar_filtros,
@@ -123,6 +124,36 @@ class TestParseArea(unittest.TestCase):
 
     def test_lixo_com_numero_no_meio(self):
         self.assertEqual(parse_area('xx12yy'), 12.0)
+
+
+class TestLimparDescricao(unittest.TestCase):
+    def test_limpa_html_e_caracteres_solitarios_da_olx(self):
+        descricao = (
+            'Falar com Arthur 83996277275<br><br>'
+            'Apartamento para alugar - Aura do Cruzeiro | Campina Grande/PB<br><br>'
+            'More conforto, lazer e praticidade em um dos melhores bairros de Campina Grande!<br><br>'
+            '? O condomínio oferece:<br><br>'
+            '* Piscina<br>* Academia<br>* Churrasqueira<br><br>'
+            '? Valor: R$ 1.200,00/mês<br>'
+            '? Aluguel + condomínio + água inclusos.'
+        )
+
+        resultado = limpar_descricao(descricao)
+
+        self.assertNotIn('<br>', resultado)
+        self.assertNotIn('? O condomínio', resultado)
+        self.assertIn('O condomínio oferece:', resultado)
+        self.assertIn('* Piscina\n* Academia\n* Churrasqueira', resultado)
+        self.assertIn('Valor: R$ 1.200,00/mês', resultado)
+        self.assertIn('Aluguel + condomínio + água inclusos.', resultado)
+
+    def test_decodifica_entidades_html_e_remove_tags(self):
+        resultado = limpar_descricao('<p>Apto&nbsp;novo &amp; mobiliado</p><div>Centro</div>')
+        self.assertEqual(resultado, 'Apto novo & mobiliado\n\nCentro')
+
+    def test_descricao_vazia(self):
+        self.assertIsNone(limpar_descricao('  <br>  '))
+        self.assertIsNone(limpar_descricao(None))
 
 
 class TestExtrairBairroCidade(unittest.TestCase):
@@ -394,6 +425,16 @@ class TestNormalizarAnuncio(unittest.TestCase):
         import json
         resultado = normalizar_anuncio(anuncio)
         self.assertEqual(json.loads(resultado['fotos']), [])
+
+    def test_normalizacao_limpa_descricao(self):
+        anuncio = {
+            'external_id': '123',
+            'titulo': 'Teste',
+            'descricao_raw': 'Linha 1<br><br>? Linha 2 &amp; mais',
+            'fotos': [],
+        }
+        resultado = normalizar_anuncio(anuncio)
+        self.assertEqual(resultado['descricao'], 'Linha 1\n\nLinha 2 & mais')
 
 
 class TestNormalizarLista(unittest.TestCase):
