@@ -1,4 +1,5 @@
 import csv
+import html
 import json
 import os
 import re
@@ -61,6 +62,23 @@ def parse_area(valor: Optional[str]) -> Optional[float]:
         return float(num)
     except ValueError:
         return None
+
+
+def limpar_descricao(valor: Optional[str]) -> Optional[str]:
+    if not valor:
+        return None
+
+    texto = html.unescape(valor)
+    texto = re.sub(r'<\s*br\s*/?\s*>', '\n', texto, flags=re.I)
+    texto = re.sub(r'</\s*(p|div|li|ul|ol)\s*>', '\n\n', texto, flags=re.I)
+    texto = re.sub(r'<[^>]+>', '', texto)
+    texto = texto.replace('\r\n', '\n').replace('\r', '\n').replace('\xa0', ' ')
+    texto = re.sub(r'[ \t]+', ' ', texto)
+    texto = re.sub(r'(?m)^[ \t]*\?[ \t]+', '', texto)
+    texto = '\n'.join(linha.strip() for linha in texto.split('\n'))
+    texto = re.sub(r'\n{3,}', '\n\n', texto).strip()
+
+    return texto or None
 
 
 def extrair_cep(texto: Optional[str]) -> Optional[str]:
@@ -176,10 +194,11 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
     if not external_id:
         return None
 
+    descricao = limpar_descricao(anuncio.get('descricao_raw'))
     endereco = extrair_endereco(
         anuncio.get('endereco_raw'),
         titulo=anuncio.get('titulo'),
-        descricao=anuncio.get('descricao_raw'),
+        descricao=descricao,
     )
 
     return {
@@ -201,7 +220,7 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
         'vagas': parse_inteiro(anuncio.get('vagas_raw')),
         'url': anuncio.get('url'),
         'data_coleta': anuncio.get('data_coleta'),
-        'descricao': anuncio.get('descricao_raw'),
+        'descricao': descricao,
         'fonte': anuncio.get('fonte'),
         'fotos': json.dumps(anuncio.get('fotos') or [], ensure_ascii=False),
     }
