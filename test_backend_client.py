@@ -64,6 +64,16 @@ class TestCsvParaPayloadFotos(unittest.TestCase):
         payload = bc.csv_para_payload({})
         self.assertEqual(payload['fotos'], [])
 
+    def test_coordenadas_por_bairro(self):
+        payload = bc.csv_para_payload({'bairro': 'Três Irmãs'})
+        self.assertEqual(payload['latitude'], -7.2740)
+        self.assertEqual(payload['longitude'], -35.9360)
+
+    def test_coordenadas_fallback_centro(self):
+        payload = bc.csv_para_payload({})
+        self.assertEqual(payload['latitude'], bc.CAMPINA_GRANDE_CENTER['latitude'])
+        self.assertEqual(payload['longitude'], bc.CAMPINA_GRANDE_CENTER['longitude'])
+
 
 class TestEnviarUm(unittest.TestCase):
     @patch('backend_client.requests.post')

@@ -1,6 +1,8 @@
 import csv
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime
 from typing import Optional
 
@@ -10,6 +12,52 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+CAMPINA_GRANDE_CENTER = {'latitude': -7.2306, 'longitude': -35.8811}
+
+BAIRRO_COORDS = {
+    'centro': {'latitude': -7.2210, 'longitude': -35.8810},
+    'universitario': {'latitude': -7.2190, 'longitude': -35.8945},
+    'bodocongo': {'latitude': -7.2430, 'longitude': -35.9100},
+    'novo-bodocongo': {'latitude': -7.2380, 'longitude': -35.9250},
+    'tres-irmas': {'latitude': -7.2740, 'longitude': -35.9360},
+    'tres-irmaos': {'latitude': -7.2740, 'longitude': -35.9360},
+    'centenario': {'latitude': -7.2130, 'longitude': -35.8680},
+    'catole': {'latitude': -7.2240, 'longitude': -35.8860},
+    'itarare': {'latitude': -7.2360, 'longitude': -35.8800},
+    'jardim-tavares': {'latitude': -7.2350, 'longitude': -35.8780},
+    'alto-branco': {'latitude': -7.2080, 'longitude': -35.8850},
+    'mirante': {'latitude': -7.2170, 'longitude': -35.9050},
+    'nova-brasilia': {'latitude': -7.2280, 'longitude': -35.9000},
+    'sao-jose': {'latitude': -7.2400, 'longitude': -35.8750},
+    'prata': {'latitude': -7.2240, 'longitude': -35.8920},
+    'liberdade': {'latitude': -7.2410, 'longitude': -35.8980},
+    'cruzeiro': {'latitude': -7.2410, 'longitude': -35.9100},
+    'malvinas': {'latitude': -7.2220, 'longitude': -35.9480},
+    'serrotao': {'latitude': -7.2580, 'longitude': -35.9350},
+    'tambor': {'latitude': -7.2440, 'longitude': -35.8950},
+    'santa-rosa': {'latitude': -7.2300, 'longitude': -35.9070},
+    'monte-santo': {'latitude': -7.2110, 'longitude': -35.9020},
+    'jardim-paulistano': {'latitude': -7.2320, 'longitude': -35.8890},
+    'vila-cabral': {'latitude': -7.2490, 'longitude': -35.9220},
+    'bela-vista': {'latitude': -7.2190, 'longitude': -35.8700},
+    'conceicao': {'latitude': -7.2140, 'longitude': -35.8740},
+    'bento-figueiredo': {'latitude': -7.2290, 'longitude': -35.8660},
+    'aluizio-campos': {'latitude': -7.2960, 'longitude': -35.9370},
+    'jose-pinheiro': {'latitude': -7.2290, 'longitude': -35.8730},
+    'sandra-cavalcante': {'latitude': -7.2460, 'longitude': -35.8840},
+    'bairro-das-cidades': {'latitude': -7.2580, 'longitude': -35.8850},
+    'dinamerica': {'latitude': -7.2300, 'longitude': -35.9170},
+    'palmeira': {'latitude': -7.2120, 'longitude': -35.8930},
+    'santo-antonio': {'latitude': -7.2250, 'longitude': -35.8720},
+    'distrito-industrial': {'latitude': -7.2720, 'longitude': -35.9070},
+    'jardim-quarenta': {'latitude': -7.2340, 'longitude': -35.8990},
+    'nacoes': {'latitude': -7.2050, 'longitude': -35.8910},
+    'velame': {'latitude': -7.2670, 'longitude': -35.8940},
+    'quarenta': {'latitude': -7.2320, 'longitude': -35.8950},
+    'santa-cruz': {'latitude': -7.2500, 'longitude': -35.8910},
+}
+
+
 def carregar_config() -> dict:
     return {
         'url': os.getenv('BACKEND_URL', 'http://localhost:8080/api/imoveis/lote'),
@@ -17,6 +65,20 @@ def carregar_config() -> dict:
         'timeout': int(os.getenv('BACKEND_TIMEOUT', '30')),
         'batch_size': int(os.getenv('BACKEND_BATCH_SIZE', '20')),
     }
+
+
+def slugify(texto: Optional[str]) -> str:
+    if not texto:
+        return ''
+    normalized = unicodedata.normalize('NFKD', texto)
+    ascii_text = normalized.encode('ascii', 'ignore').decode('ascii').lower()
+    return re.sub(r'(^-|-$)', '', re.sub(r'[^a-z0-9]+', '-', ascii_text).strip('-'))
+
+
+def coordenadas_bairro(bairro: Optional[str]) -> dict:
+    if not bairro:
+        return CAMPINA_GRANDE_CENTER
+    return BAIRRO_COORDS.get(slugify(bairro), CAMPINA_GRANDE_CENTER)
 
 
 def dividir_em_lotes(registros: list, tamanho: int) -> list:
@@ -87,6 +149,7 @@ def csv_para_payload(linha: dict) -> dict:
     estado = linha.get('estado', 'PB')
     endereco_parts = [p for p in [bairro, cidade, estado] if p]
     endereco = linha.get('endereco') or (', '.join(endereco_parts) if endereco_parts else None)
+    coordenadas = coordenadas_bairro(bairro)
 
     return {
         'externalId': linha.get('external_id'),
@@ -97,6 +160,8 @@ def csv_para_payload(linha: dict) -> dict:
         'categoria': linha.get('categoria') or None,
         'endereco': endereco,
         'bairro': linha.get('bairro') or None,
+        'latitude': coordenadas['latitude'],
+        'longitude': coordenadas['longitude'],
         'cidade': linha.get('cidade') or None,
         'estado': estado,
         'quartos': quartos_int,
