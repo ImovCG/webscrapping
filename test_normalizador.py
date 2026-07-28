@@ -250,6 +250,16 @@ class TestExtrairEndereco(unittest.TestCase):
         self.assertEqual(resultado['bairro'], 'Três Irmãs')
         self.assertEqual(resultado['cidade'], 'Campina Grande')
 
+    def test_cidade_bloqueada_nao_inferida_como_campina_grande(self):
+        resultado = extrair_endereco(
+            'Centro - Bananeiras - PB',
+            titulo='Casa para alugar no bairro Centro - Bananeiras/PB',
+        )
+
+        self.assertEqual(resultado['bairro'], 'Centro')
+        self.assertIsNone(resultado['cidade'])
+        self.assertEqual(resultado['cidade_bloqueada'], 'Bananeiras')
+
     def test_endereco_vazio(self):
         bairro, cidade = extrair_bairro_cidade('')
         self.assertIsNone(bairro)
@@ -262,12 +272,16 @@ class TestAplicarFiltros(unittest.TestCase):
             'preco_maximo': 1500,
             'bairros_permitidos': [],
             'categorias_permitidas': [],
+            'cidades_permitidas': ['Campina Grande'],
+            'cidades_bloqueadas': ['Bananeiras', 'Guarabira'],
+            'termos_bloqueados': ['moto', 'start 160', 'honda', 'yamaha'],
+            'exigir_cidade_permitida': True,
             'remover_sem_preco': True,
             'remover_sem_bairro': False,
         }
 
     def test_aceita_dentro_do_preco(self):
-        dados = {'preco': 1200.0, 'bairro': 'Centro', 'categoria': 'apartamento'}
+        dados = {'preco': 1200.0, 'bairro': 'Centro', 'cidade': 'Campina Grande', 'categoria': 'apartamento'}
         self.assertTrue(aplicar_filtros(dados, self.config_padrao))
 
     def test_rejeita_acima_do_preco(self):
@@ -280,11 +294,11 @@ class TestAplicarFiltros(unittest.TestCase):
 
     def test_aceita_sem_preco_se_filtro_desligado(self):
         config = {**self.config_padrao, 'remover_sem_preco': False}
-        dados = {'preco': None, 'bairro': 'Centro', 'categoria': None}
+        dados = {'preco': None, 'bairro': 'Centro', 'cidade': 'Campina Grande', 'categoria': None}
         self.assertTrue(aplicar_filtros(dados, config))
 
     def test_aceita_no_limite_do_preco(self):
-        dados = {'preco': 1500.0, 'bairro': 'Centro', 'categoria': None}
+        dados = {'preco': 1500.0, 'bairro': 'Centro', 'cidade': 'Campina Grande', 'categoria': None}
         self.assertTrue(aplicar_filtros(dados, self.config_padrao))
 
     def test_rejeita_bairro_nao_permitido(self):
@@ -294,7 +308,7 @@ class TestAplicarFiltros(unittest.TestCase):
 
     def test_aceita_bairro_permitido(self):
         config = {**self.config_padrao, 'bairros_permitidos': ['Centro', 'Bodocongo']}
-        dados = {'preco': 1200.0, 'bairro': 'Centro', 'categoria': None}
+        dados = {'preco': 1200.0, 'bairro': 'Centro', 'cidade': 'Campina Grande', 'categoria': None}
         self.assertTrue(aplicar_filtros(dados, config))
 
     def test_rejeita_categoria_nao_permitida(self):
@@ -304,7 +318,7 @@ class TestAplicarFiltros(unittest.TestCase):
 
     def test_aceita_categoria_permitida(self):
         config = {**self.config_padrao, 'categorias_permitidas': ['apartamento']}
-        dados = {'preco': 1200.0, 'bairro': 'Centro', 'categoria': 'apartamento'}
+        dados = {'preco': 1200.0, 'bairro': 'Centro', 'cidade': 'Campina Grande', 'categoria': 'apartamento'}
         self.assertTrue(aplicar_filtros(dados, config))
 
     def test_rejeita_sem_bairro_se_filtro_ligado(self):
@@ -313,13 +327,39 @@ class TestAplicarFiltros(unittest.TestCase):
         self.assertFalse(aplicar_filtros(dados, config))
 
     def test_aceita_sem_bairro_se_filtro_desligado(self):
-        dados = {'preco': 1200.0, 'bairro': None, 'categoria': None}
+        dados = {'preco': 1200.0, 'bairro': None, 'cidade': 'Campina Grande', 'categoria': None}
         self.assertTrue(aplicar_filtros(dados, self.config_padrao))
 
     def test_sem_limite_de_preco(self):
         config = {**self.config_padrao, 'preco_maximo': None}
-        dados = {'preco': 999999.0, 'bairro': 'Centro', 'categoria': None}
+        dados = {'preco': 999999.0, 'bairro': 'Centro', 'cidade': 'Campina Grande', 'categoria': None}
         self.assertTrue(aplicar_filtros(dados, config))
+
+    def test_rejeita_cidade_bloqueada(self):
+        dados = {
+            'preco': 1200.0,
+            'bairro': 'Centro',
+            'cidade': None,
+            'categoria': 'casa',
+            'titulo': 'Casa para alugar no Centro de Bananeiras',
+            'descricao': '',
+        }
+        self.assertFalse(aplicar_filtros(dados, self.config_padrao))
+
+    def test_rejeita_moto(self):
+        dados = {
+            'preco': 180.0,
+            'bairro': 'Malvinas',
+            'cidade': 'Campina Grande',
+            'categoria': None,
+            'titulo': 'Moto pra alugar',
+            'descricao': 'Honda Start 160 para trabalhar',
+        }
+        self.assertFalse(aplicar_filtros(dados, self.config_padrao))
+
+    def test_rejeita_sem_cidade_quando_exigida(self):
+        dados = {'preco': 1200.0, 'bairro': 'Centro', 'cidade': None, 'categoria': 'apartamento'}
+        self.assertFalse(aplicar_filtros(dados, self.config_padrao))
 
 
 class TestNormalizarAnuncio(unittest.TestCase):
@@ -440,6 +480,8 @@ class TestNormalizarAnuncio(unittest.TestCase):
 class TestNormalizarLista(unittest.TestCase):
     config = {
         'preco_maximo': 1500, 'bairros_permitidos': [], 'categorias_permitidas': [],
+        'cidades_permitidas': ['Campina Grande'], 'cidades_bloqueadas': ['Bananeiras', 'Guarabira'],
+        'termos_bloqueados': ['moto', 'start 160', 'honda', 'yamaha'], 'exigir_cidade_permitida': True,
         'remover_sem_preco': True, 'remover_sem_bairro': False,
     }
 
@@ -455,6 +497,40 @@ class TestNormalizarLista(unittest.TestCase):
 
     def test_lista_vazia(self):
         self.assertEqual(normalizar_lista([], self.config), [])
+
+    def test_filtra_bananeiras_guarabira_e_moto(self):
+        anuncios = [
+            {
+                'external_id': '1',
+                'titulo': 'Apartamento no Centro de Campina Grande',
+                'preco_raw': 'R$ 800',
+                'endereco_raw': 'Centro, Campina Grande, PB',
+                'descricao_raw': 'Apartamento para alugar',
+            },
+            {
+                'external_id': '2',
+                'titulo': 'Casa para alugar no Centro - Bananeiras/PB',
+                'preco_raw': 'R$ 700',
+                'endereco_raw': 'Centro - Bananeiras - PB',
+            },
+            {
+                'external_id': '3',
+                'titulo': 'Apartamento para alugar em Guarabira',
+                'preco_raw': 'R$ 800',
+                'endereco_raw': 'Centro, PB',
+            },
+            {
+                'external_id': '4',
+                'titulo': 'Moto pra alugar',
+                'preco_raw': 'R$ 180',
+                'endereco_raw': 'Malvinas, Campina Grande, PB',
+                'descricao_raw': 'Honda Start 160',
+            },
+        ]
+
+        resultado = normalizar_lista(anuncios, self.config)
+
+        self.assertEqual([r['external_id'] for r in resultado], ['1'])
 
 
 class TestEscreverCsv(unittest.TestCase):

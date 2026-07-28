@@ -1,6 +1,22 @@
 filtros:
   preco_maximo: 1500
+  cidades_permitidas:
+    - Campina Grande
+  cidades_bloqueadas:
+    - Bananeiras
+    - Guarabira
+    - João Pessoa
+    - Patos
+    - Lagoa Seca
+    - Esperança
+    - Solânea
+  termos_bloqueados:
+    - moto
+    - start 160
+    - honda
+    - yamaha
+  exigir_cidade_permitida: true
   bairros_permitidos: []
   categorias_permitidas: []
   remover_sem_preco: true
-  remover_sem_bairro: false
+  remover_sem_bairro: true

@@ -3,12 +3,31 @@ import html
 import json
 import os
 import re
+import unicodedata
 from datetime import date
 from typing import Optional
 
 import yaml
 
 from bairros_campina_grande import bairro_por_token, encontrar_bairro_no_texto
+
+
+CIDADES_BLOQUEADAS_PADRAO = [
+    'Bananeiras',
+    'Guarabira',
+    'João Pessoa',
+    'Patos',
+    'Lagoa Seca',
+    'Esperança',
+    'Solânea',
+]
+
+TERMOS_BLOQUEADOS_PADRAO = [
+    'moto',
+    'start 160',
+    'honda',
+    'yamaha',
+]
 
 
 def carregar_config(caminho: str = 'config.yaml') -> dict:
@@ -42,6 +61,47 @@ def parse_preco(valor: Optional[str]) -> Optional[float]:
         return float(numeros)
     except ValueError:
         return None
+
+
+def normalizar_texto(valor: Optional[str]) -> str:
+    if not valor:
+        return ''
+    texto = unicodedata.normalize('NFD', valor)
+    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')
+    return re.sub(r'\s+', ' ', texto).strip().lower()
+
+
+def texto_anuncio(dados: dict) -> str:
+    campos = [
+        dados.get('titulo'),
+        dados.get('descricao'),
+        dados.get('categoria'),
+        dados.get('endereco'),
+        dados.get('bairro'),
+        dados.get('cidade'),
+    ]
+    return ' '.join(c for c in campos if c)
+
+
+def contem_termo(texto: str, termos: list[str]) -> bool:
+    texto_norm = normalizar_texto(texto)
+    for termo in termos:
+        termo_norm = normalizar_texto(termo)
+        if termo_norm and re.search(rf'\b{re.escape(termo_norm)}\b', texto_norm):
+            return True
+    return False
+
+
+def cidade_bloqueada_no_texto(texto: Optional[str], cidades_bloqueadas: Optional[list[str]] = None) -> Optional[str]:
+    cidades = cidades_bloqueadas or CIDADES_BLOQUEADAS_PADRAO
+    texto_norm = normalizar_texto(texto)
+    if not texto_norm:
+        return None
+    for cidade in cidades:
+        cidade_norm = normalizar_texto(cidade)
+        if re.search(rf'\b{re.escape(cidade_norm)}\b', texto_norm):
+            return cidade
+    return None
 
 
 def parse_inteiro(valor: Optional[str]) -> Optional[int]:
@@ -93,12 +153,14 @@ def extrair_endereco(
     titulo: Optional[str] = None,
     descricao: Optional[str] = None,
 ) -> dict:
+    texto_completo = f'{endereco_raw or ""} {titulo or ""} {descricao or ""}'
+    cidade_bloqueada = cidade_bloqueada_no_texto(texto_completo)
     cep = extrair_cep(endereco_raw)
     estado = 'PB' if endereco_raw and re.search(r'\bPB\b|para[ií]ba', endereco_raw, re.I) else 'PB'
 
     if not endereco_raw:
         bairro = encontrar_bairro_no_texto(f'{titulo or ""} {descricao or ""}')
-        cidade = 'Campina Grande' if bairro else None
+        cidade = None if cidade_bloqueada else ('Campina Grande' if bairro else None)
         endereco = ', '.join(p for p in [bairro, cidade, estado] if p) if bairro else None
         return {
             'endereco': endereco,
@@ -106,6 +168,7 @@ def extrair_endereco(
             'cidade': cidade,
             'estado': estado,
             'cep': cep,
+            'cidade_bloqueada': cidade_bloqueada,
         }
 
     partes = re.split(r'[–\-—,|]', endereco_raw)
@@ -135,7 +198,7 @@ def extrair_endereco(
     if not bairro:
         bairro = encontrar_bairro_no_texto(f'{endereco_raw} {titulo or ""} {descricao or ""}')
 
-    if not cidade and (bairro or re.search(r'campina grande', endereco_raw, re.I)):
+    if not cidade and not cidade_bloqueada and (bairro or re.search(r'campina grande', endereco_raw, re.I)):
         cidade = 'Campina Grande'
 
     endereco_partes = []
@@ -159,6 +222,7 @@ def extrair_endereco(
         'cidade': cidade,
         'estado': estado,
         'cep': cep,
+        'cidade_bloqueada': cidade_bloqueada,
     }
 
 
@@ -173,6 +237,26 @@ def aplicar_filtros(dados: dict, config: dict) -> bool:
 
     preco_max = config.get('preco_maximo')
     if preco_max and dados.get('preco') and dados['preco'] > preco_max:
+        return False
+
+    texto = texto_anuncio(dados)
+
+    cidades_bloqueadas = config.get('cidades_bloqueadas') or CIDADES_BLOQUEADAS_PADRAO
+    if dados.get('cidade_bloqueada') or cidade_bloqueada_no_texto(texto, cidades_bloqueadas):
+        return False
+
+    termos_bloqueados = config.get('termos_bloqueados') or TERMOS_BLOQUEADOS_PADRAO
+    texto_bloqueio_categoria = ' '.join(c for c in [dados.get('titulo'), dados.get('categoria')] if c)
+    if contem_termo(texto_bloqueio_categoria, termos_bloqueados):
+        return False
+
+    cidades_permitidas = config.get('cidades_permitidas', [])
+    if cidades_permitidas:
+        cidade = dados.get('cidade')
+        if not cidade or normalizar_texto(cidade) not in {normalizar_texto(c) for c in cidades_permitidas}:
+            return False
+
+    if config.get('exigir_cidade_permitida', False) and dados.get('cidade') != 'Campina Grande':
         return False
 
     bairros = config.get('bairros_permitidos', [])
@@ -212,6 +296,7 @@ def normalizar_anuncio(anuncio: dict) -> Optional[dict]:
         'bairro': endereco['bairro'],
         'estado': endereco['estado'],
         'cep': endereco['cep'],
+        'cidade_bloqueada': endereco.get('cidade_bloqueada'),
         'quartos': parse_inteiro(anuncio.get('quartos_raw')),
         'banheiros': parse_inteiro(anuncio.get('banheiros_raw')),
         'area_m2': parse_area(anuncio.get('area_raw')),
