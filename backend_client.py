@@ -62,6 +62,7 @@ def carregar_config() -> dict:
     return {
         'url': os.getenv('BACKEND_URL', 'http://localhost:8080/api/imoveis/lote'),
         'token': os.getenv('BACKEND_TOKEN'),
+        'api_key': os.getenv('SCRAPER_API_KEY'),
         'timeout': int(os.getenv('BACKEND_TIMEOUT', '30')),
         'batch_size': int(os.getenv('BACKEND_BATCH_SIZE', '20')),
     }
@@ -191,12 +192,17 @@ def enviar_lote(caminho_csv: str) -> dict:
     config = carregar_config()
     url = config['url']
     token = config['token']
+    api_key = config['api_key']
     timeout = config['timeout']
     batch_size = config['batch_size']
 
     headers = {'Content-Type': 'application/json'}
     if token:
         headers['Authorization'] = f'Bearer {token}'
+    # Chave de servico da carga em lote. Sem ela o backend so aceita se tambem estiver
+    # sem chave configurada do lado dele.
+    if api_key:
+        headers['X-Api-Key'] = api_key
 
     registros = []
     with open(caminho_csv, 'r', encoding='utf-8') as f:
